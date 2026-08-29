@@ -1,0 +1,1 @@
+enum PatrolType { pingPong, wander }
