@@ -23,6 +23,14 @@ class _PendingReplacement {
   double delay;
 }
 
+/// Enemy horde generation and replacement.
+///
+/// Core algorithm:
+/// - [generateComposition] — public entry (category + living score + peak score)
+/// - [_budget] / [_allowedTypes] / [_pickArchetype] / [_fillCounts]
+///
+/// Tunables: `lib/game/config/spawn_config.dart`
+/// Per-unit score, HP, damage: `lib/game/config/unit_definitions.dart`
 class SpawnSystem {
   SpawnSystem(this.game);
 
@@ -34,9 +42,9 @@ class SpawnSystem {
   }
 
   void populateInitial() {
+    final plan = SpawnConfig.slotPlan(game.score.maxScore);
     for (final category in DifficultyCategory.values) {
-      final slots = SpawnConfig.slotsFor(category);
-      for (var i = 0; i < slots; i++) {
+      for (var i = 0; i < plan.of(category); i++) {
         spawnSquad(category);
       }
     }
@@ -63,7 +71,45 @@ class SpawnSystem {
       SpawnConfig.replacementDelayMin,
       SpawnConfig.replacementDelayMax,
     );
-    _pending.add(_PendingReplacement(category, delay));
+    final next = game.score.isCriticalRecovery
+        ? DifficultyCategory.weak
+        : _categoryWithBiggestDeficit();
+    _pending.add(_PendingReplacement(next, delay));
+  }
+
+  /// Keep the live mix close to the current slot plan as the player grows.
+  DifficultyCategory _categoryWithBiggestDeficit() {
+    final plan = SpawnConfig.slotPlan(game.score.maxScore);
+    final counts = {
+      for (final category in DifficultyCategory.values) category: 0,
+    };
+    for (final squad in game.squads.enemySquads.values) {
+      if (!squad.eliminated) {
+        counts[squad.category] = counts[squad.category]! + 1;
+      }
+    }
+    for (final pending in _pending) {
+      counts[pending.category] = counts[pending.category]! + 1;
+    }
+    var best = DifficultyCategory.weak;
+    var bestDeficit = -1000;
+    const priority = [
+      DifficultyCategory.deadly,
+      DifficultyCategory.strong,
+      DifficultyCategory.normal,
+      DifficultyCategory.weak,
+    ];
+    for (final category in priority) {
+      final deficit = plan.of(category) - counts[category]!;
+      if (deficit > bestDeficit) {
+        bestDeficit = deficit;
+        best = category;
+      }
+    }
+    if (bestDeficit <= 0) {
+      return DifficultyCategory.strong;
+    }
+    return best;
   }
 
   EnemySquad? spawnSquad(DifficultyCategory category) {
@@ -115,6 +161,8 @@ class SpawnSystem {
     return squad;
   }
 
+  /// Builds an enemy horde whose listed score sits in a threat band relative
+  /// to the living army. Entry point for a full rewrite of this algorithm.
   static SquadComposition generateComposition(
     DifficultyCategory category,
     int currentScore,
@@ -124,8 +172,13 @@ class SpawnSystem {
     var budget = _budget(category, currentScore, maxScore, rng);
     budget *= rng.range(1 - SpawnConfig.budgetVariance, 1 + SpawnConfig.budgetVariance);
     budget = max(1, budget);
-    final allowed = _allowedTypes(maxScore, rng);
-    var archetype = _pickArchetype(allowed, rng);
+    final allowed = _allowedTypes(
+      maxScore: maxScore,
+      budget: budget,
+      category: category,
+      rng: rng,
+    );
+    var archetype = _pickArchetype(allowed, rng, category);
     if (category == DifficultyCategory.weak && currentScore <= 8) {
       archetype = SquadArchetype.swarm;
     }
@@ -227,38 +280,76 @@ class SpawnSystem {
     int maxScore,
     GameRng rng,
   ) {
+    final current = max(1, currentScore);
     switch (category) {
       case DifficultyCategory.weak:
         if (currentScore <= 1) {
           return 1;
         }
-        return currentScore *
-            rng.range(SpawnConfig.weakBudgetMinFactor, SpawnConfig.weakBudgetMaxFactor);
+        return current *
+            rng.range(
+              SpawnConfig.weakBudgetMinFactor,
+              SpawnConfig.weakBudgetMaxFactor,
+            );
       case DifficultyCategory.normal:
-        return 7 + 0.62 * pow(max(5, maxScore), 0.68);
+        return current *
+            rng.range(
+              SpawnConfig.evenBudgetMinFactor,
+              SpawnConfig.evenBudgetMaxFactor,
+            );
       case DifficultyCategory.strong:
-        return 12 + 0.95 * pow(max(5, maxScore), 0.68);
+        return current *
+            rng.range(
+              SpawnConfig.strongBudgetMinFactor,
+              SpawnConfig.strongBudgetMaxFactor,
+            );
       case DifficultyCategory.deadly:
-        return 18 + 1.35 * pow(max(5, maxScore), 0.68);
+        final deadly = current *
+            rng.range(
+              SpawnConfig.deadlyBudgetMinFactor,
+              SpawnConfig.deadlyBudgetMaxFactor,
+            );
+        // After a deep run, keep at least some peak-relative pressure.
+        final floor = maxScore * 0.12;
+        return max(deadly, floor);
     }
   }
 
-  static Set<UnitType> _allowedTypes(int maxScore, GameRng rng) {
+  /// Progress unlocks plus a budget cap so a deadly pack can field tanks
+  /// the player has not "unlocked" yet, without dropping a Golem on a 20-score army.
+  static Set<UnitType> _allowedTypes({
+    required int maxScore,
+    required double budget,
+    required DifficultyCategory category,
+    required GameRng rng,
+  }) {
     final allowed = <UnitType>{UnitType.miniKnight};
+    final budgetCap = switch (category) {
+      DifficultyCategory.weak => budget * 0.35,
+      DifficultyCategory.normal => budget * 0.40,
+      DifficultyCategory.strong => budget * 0.55,
+      DifficultyCategory.deadly => budget * 0.70,
+    };
     SpawnConfig.unlocks.forEach((type, thresholds) {
       if (type == UnitType.miniKnight) {
         return;
       }
-      if (maxScore >= thresholds.commonAt) {
-        allowed.add(type);
-      } else if (maxScore >= thresholds.rareAt && rng.nextDouble() < 0.28) {
+      final score = UnitCatalog.stats(type).scoreValue;
+      final byProgress = maxScore >= thresholds.commonAt ||
+          (maxScore >= thresholds.rareAt && rng.nextDouble() < 0.28);
+      final byBudget = score <= budgetCap;
+      if (byProgress || byBudget) {
         allowed.add(type);
       }
     });
     return allowed;
   }
 
-  static SquadArchetype _pickArchetype(Set<UnitType> allowed, GameRng rng) {
+  static SquadArchetype _pickArchetype(
+    Set<UnitType> allowed,
+    GameRng rng,
+    DifficultyCategory category,
+  ) {
     final items = <SquadArchetype>[];
     final weights = <double>[];
     void add(SquadArchetype archetype, double weight, UnitType? need) {
@@ -269,13 +360,35 @@ class SpawnSystem {
       weights.add(weight);
     }
 
-    add(SquadArchetype.swarm, 1.1, null);
-    add(SquadArchetype.knightLine, 1.0, UnitType.mediumKnight);
-    add(SquadArchetype.casterEscort, 0.85, UnitType.wizard);
-    add(SquadArchetype.heavyLine, 0.8, UnitType.heavyKnight);
-    add(SquadArchetype.golemEscort, 0.7, UnitType.miniGolem);
-    add(SquadArchetype.titan, 0.45, UnitType.golem);
-    add(SquadArchetype.mixed, 0.75, UnitType.mediumKnight);
+    switch (category) {
+      case DifficultyCategory.weak:
+        add(SquadArchetype.swarm, 1.4, null);
+        add(SquadArchetype.knightLine, 0.7, UnitType.mediumKnight);
+        add(SquadArchetype.mixed, 0.25, UnitType.mediumKnight);
+      case DifficultyCategory.normal:
+        add(SquadArchetype.mixed, 1.0, UnitType.mediumKnight);
+        add(SquadArchetype.knightLine, 1.0, UnitType.mediumKnight);
+        add(SquadArchetype.casterEscort, 0.9, UnitType.wizard);
+        add(SquadArchetype.swarm, 0.7, null);
+        add(SquadArchetype.rangedBall, 0.55, UnitType.wizard);
+        add(SquadArchetype.heavyLine, 0.5, UnitType.heavyKnight);
+      case DifficultyCategory.strong:
+        add(SquadArchetype.heavyLine, 1.0, UnitType.heavyKnight);
+        add(SquadArchetype.casterEscort, 0.95, UnitType.wizard);
+        add(SquadArchetype.golemEscort, 0.9, UnitType.miniGolem);
+        add(SquadArchetype.rangedBall, 0.8, UnitType.wizard);
+        add(SquadArchetype.tankWall, 0.7, UnitType.miniGolem);
+        add(SquadArchetype.mixed, 0.7, UnitType.mediumKnight);
+        add(SquadArchetype.titan, 0.45, UnitType.golem);
+      case DifficultyCategory.deadly:
+        add(SquadArchetype.titan, 1.1, UnitType.golem);
+        add(SquadArchetype.tankWall, 1.0, UnitType.miniGolem);
+        add(SquadArchetype.golemEscort, 0.95, UnitType.miniGolem);
+        add(SquadArchetype.rangedBall, 0.85, UnitType.wizard);
+        add(SquadArchetype.heavyLine, 0.8, UnitType.heavyKnight);
+        add(SquadArchetype.mixed, 0.6, UnitType.heavyKnight);
+        add(SquadArchetype.casterEscort, 0.55, UnitType.wizard);
+    }
     if (items.isEmpty) {
       return SquadArchetype.swarm;
     }
@@ -310,14 +423,26 @@ class SpawnSystem {
     avg = max(1, avg);
     var minCount = SpawnConfig.minUnitCounts[archetype]!;
     var maxCount = SpawnConfig.maxUnitCounts[archetype]!;
-    final preferred = SpawnConfig.preferredUnitCounts[archetype]!;
+    final hardCap = switch (category) {
+      DifficultyCategory.weak => 12,
+      DifficultyCategory.normal => 24,
+      DifficultyCategory.strong => 28,
+      DifficultyCategory.deadly => 36,
+    };
+    final extra = switch (category) {
+      DifficultyCategory.weak => 0,
+      DifficultyCategory.normal => 2,
+      DifficultyCategory.strong => 6,
+      DifficultyCategory.deadly => 10,
+    };
+    maxCount = min(hardCap, maxCount + extra);
     if (category == DifficultyCategory.weak) {
       minCount = 1;
       maxCount = min(12, maxCount);
     }
-    var count = (budget / avg).round();
-    count = count.clamp(minCount, maxCount);
-    count = ((count + preferred) / 2).round().clamp(minCount, maxCount);
+    // Spend the budget. Do not pull toward a flavor "preferred" size — that
+    // used to cap a deadly pack at 14 heavies (~350 score) forever.
+    var count = (budget / avg).round().clamp(minCount, maxCount);
 
     final counts = <UnitType, int>{};
     var assigned = 0;
@@ -350,18 +475,34 @@ class SpawnSystem {
     }
 
     var total = _scoreOf(counts);
-    final low = budget * (1 - SpawnConfig.budgetVariance);
-    final high = budget * (1 + SpawnConfig.budgetVariance);
+    final low = budget * 0.92;
+    final high = budget * 1.18;
+    final expensive = _priciestAllowed(allowed);
     var guard = 0;
-    while (total < low && assigned < maxCount && guard < 24) {
-      final type = _upgradeOrAdd(counts, types, allowed);
-      counts[type] = (counts[type] ?? 0) + 1;
-      assigned++;
+    while (total < low && guard < 56) {
+      if (assigned < maxCount) {
+        counts[expensive] = (counts[expensive] ?? 0) + 1;
+        assigned++;
+      } else {
+        final cheap = _cheapestPresent(counts);
+        if (cheap == null || cheap == expensive) {
+          if (assigned < hardCap) {
+            maxCount = hardCap;
+            continue;
+          }
+          break;
+        }
+        counts[cheap] = counts[cheap]! - 1;
+        if (counts[cheap] == 0) {
+          counts.remove(cheap);
+        }
+        counts[expensive] = (counts[expensive] ?? 0) + 1;
+      }
       total = _scoreOf(counts);
       guard++;
     }
     guard = 0;
-    while (total > high && assigned > minCount && guard < 24) {
+    while (total > high && assigned > minCount && guard < 40) {
       final type = _cheapestPresent(counts);
       if (type == null) {
         break;
@@ -386,25 +527,20 @@ class SpawnSystem {
     return total;
   }
 
-  static UnitType _upgradeOrAdd(
-    Map<UnitType, int> counts,
-    List<UnitType> types,
-    Set<UnitType> allowed,
-  ) {
-    const ladder = [
-      UnitType.golem,
-      UnitType.miniGolem,
-      UnitType.heavyKnight,
-      UnitType.wizard,
-      UnitType.mediumKnight,
-      UnitType.miniKnight,
-    ];
-    for (final type in ladder) {
-      if (allowed.contains(type) && types.contains(type)) {
-        return type;
+  static UnitType _priciestAllowed(Set<UnitType> allowed) {
+    UnitType best = UnitType.miniKnight;
+    var bestScore = -1;
+    var bestThreat = -1.0;
+    for (final type in allowed) {
+      final score = UnitCatalog.stats(type).scoreValue;
+      final threat = UnitCatalog.combatThreat(type);
+      if (score > bestScore || (score == bestScore && threat > bestThreat)) {
+        bestScore = score;
+        bestThreat = threat;
+        best = type;
       }
     }
-    return UnitType.miniKnight;
+    return best;
   }
 
   static UnitType? _cheapestPresent(Map<UnitType, int> counts) {

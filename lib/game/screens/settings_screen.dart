@@ -103,11 +103,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text(
-                    'Inspect enemy squad (left click)',
+                    'Inspect enemy squad (Windows left click)',
                     style: TextStyle(color: Color(0xFFEDE8D8)),
                   ),
                   subtitle: const Text(
-                    'Left-click an enemy to show squad size for 1.5s and a red ring around that squad only.',
+                    'Desktop: left-click an enemy to highlight its squad. Phone: tap an enemy — always on.',
                     style: TextStyle(color: Color(0xFF9AA890)),
                   ),
                   value: _settings.inspectSquadOnClick,

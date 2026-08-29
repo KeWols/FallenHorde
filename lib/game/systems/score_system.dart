@@ -27,7 +27,7 @@ class ScoreSystem {
   void onConverted(UnitComponent unit) {
     final value = UnitCatalog.stats(unit.type).scoreValue;
     currentScore += value;
-    maxScore += value;
+    _raiseMax(currentScore);
   }
 
   void onFriendlyDeath(UnitComponent unit) {
@@ -43,6 +43,13 @@ class ScoreSystem {
       total += unit.stats.scoreValue;
     }
     currentScore = total;
+    _raiseMax(currentScore);
+  }
+
+  void _raiseMax(int value) {
+    if (value > maxScore) {
+      maxScore = value;
+    }
   }
 
   bool get isCriticalRecovery => currentScore == 1;

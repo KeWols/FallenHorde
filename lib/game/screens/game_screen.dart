@@ -1,11 +1,13 @@
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../necromancy_game.dart';
 import '../persistence/scoreboard_storage.dart';
 import '../persistence/settings_storage.dart';
 import '../ui/game_over_overlay.dart';
 import '../ui/hud_overlay.dart';
+import '../ui/pause_overlay.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -56,14 +58,23 @@ class _GameScreenState extends State<GameScreen> {
     }
     return Scaffold(
       backgroundColor: const Color(0xFF12160F),
-      body: GameWidget<NecromancyGame>(
-        game: game,
-        autofocus: true,
-        overlayBuilderMap: {
-          'hud': (context, g) => HudOverlay(game: g),
-          'gameOver': (context, g) => GameOverOverlay(game: g),
+      body: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): game.togglePauseMenu,
         },
-        initialActiveOverlays: const ['hud'],
+        child: Focus(
+          autofocus: true,
+          child: GameWidget<NecromancyGame>(
+            game: game,
+            autofocus: true,
+            overlayBuilderMap: {
+              'hud': (context, g) => HudOverlay(game: g),
+              'pause': (context, g) => PauseOverlay(game: g),
+              'gameOver': (context, g) => GameOverOverlay(game: g),
+            },
+            initialActiveOverlays: const ['hud'],
+          ),
+        ),
       ),
     );
   }

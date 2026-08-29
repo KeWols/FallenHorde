@@ -12,11 +12,11 @@ class ScoreboardStorage {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_key);
     if (raw == null || raw.isEmpty) {
-      return const [];
+      return [];
     }
     final decoded = jsonDecode(raw);
     if (decoded is! List) {
-      return const [];
+      return [];
     }
     return decoded
         .whereType<Map>()
@@ -26,16 +26,16 @@ class ScoreboardStorage {
   }
 
   Future<List<ScoreboardEntry>> maybeInsert(int maxScore) async {
-    final entries = await load();
+    final score = maxScore < 0 ? 0 : maxScore;
+    final entries = List<ScoreboardEntry>.from(await load());
     final qualifies = entries.length < maxEntries ||
-        entries.any((e) => maxScore > e.score) ||
-        (entries.length == maxEntries && maxScore > entries.last.score);
-    if (!qualifies && entries.length >= maxEntries) {
+        (entries.isNotEmpty && score >= entries.last.score);
+    if (!qualifies) {
       return entries;
     }
     entries.add(
       ScoreboardEntry(
-        score: maxScore,
+        score: score,
         achievedAtMs: DateTime.now().millisecondsSinceEpoch,
       ),
     );

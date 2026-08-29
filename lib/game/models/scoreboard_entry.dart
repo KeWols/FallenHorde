@@ -14,8 +14,8 @@ class ScoreboardEntry {
 
   factory ScoreboardEntry.fromJson(Map<String, dynamic> json) {
     return ScoreboardEntry(
-      score: json['score'] as int? ?? 0,
-      achievedAtMs: json['achievedAtMs'] as int? ?? 0,
+      score: (json['score'] as num?)?.toInt() ?? 0,
+      achievedAtMs: (json['achievedAtMs'] as num?)?.toInt() ?? 0,
     );
   }
 }

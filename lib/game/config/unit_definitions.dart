@@ -85,4 +85,14 @@ class UnitCatalog {
   };
 
   static UnitStats stats(UnitType type) => byType[type]!;
+
+  /// Combat-weight used by horde generation. Combines listed score with
+  /// durability (HP) and damage rate so a Golem is not treated like 150 Minis.
+  static double combatThreat(UnitType type) {
+    final stats = byType[type]!;
+    final dps = stats.damage / stats.attackInterval;
+    const miniRaw = 3.0 * (1.0 / 0.85);
+    final raw = stats.maxHp * dps;
+    return stats.scoreValue * 0.62 + (raw / miniRaw) * 0.38;
+  }
 }

@@ -60,14 +60,24 @@ class PlaceholderUnitView extends PositionComponent
             flashT,
           )!
         : baseFill;
-    final stroke = unit.faction.isFriendly
-        ? GameConfig.friendlyStroke
-        : GameConfig.enemyStroke;
+    final inspected = unit.isEnemy &&
+        unit.subEnemyId != null &&
+        game.inspectTimer > 0 &&
+        unit.subEnemyId == game.inspectedSquadId;
+    final stroke = inspected
+        ? const Color(0xFFFF1A12)
+        : (unit.faction.isFriendly
+            ? GameConfig.friendlyStroke
+            : GameConfig.enemyStroke);
     final paint = Paint()..color = fill;
+    final glow = Paint()
+      ..color = const Color(0xAAFF2A22)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 5.5;
     final outline = Paint()
       ..color = stroke
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.4;
+      ..strokeWidth = inspected ? 4.2 : 2.4;
 
     canvas.save();
     if (reveal < 0.999) {
@@ -77,6 +87,9 @@ class PlaceholderUnitView extends PositionComponent
       );
     }
     canvas.translate(r, r);
+    if (inspected) {
+      _drawShape(canvas, unit.type, r + 1.6, glow);
+    }
     _drawShape(canvas, unit.type, r, paint);
     _drawShape(canvas, unit.type, r, outline);
     if (flashT > 0) {

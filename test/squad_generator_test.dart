@@ -28,25 +28,69 @@ void main() {
     expect(composition.counts.keys, [UnitType.miniKnight]);
   });
 
-  test('high maxScore does not explode into thousands of minis', () {
+  test('even squads sit near current army power', () {
+    final composition = SpawnSystem.generateComposition(
+      DifficultyCategory.normal,
+      100,
+      100,
+      GameRng(4),
+    );
+    expect(composition.totalScore, inInclusiveRange(70, 140));
+  });
+
+  test('strong squads outscale the current army', () {
+    final composition = SpawnSystem.generateComposition(
+      DifficultyCategory.strong,
+      100,
+      100,
+      GameRng(9),
+    );
+    expect(composition.totalScore, greaterThan(120));
+  });
+
+  test('deadly squads are a serious threat, not a mini swarm', () {
+    for (final seed in [11, 21, 33, 44, 55]) {
+      final composition = SpawnSystem.generateComposition(
+        DifficultyCategory.deadly,
+        400,
+        5000,
+        GameRng(seed),
+      );
+      expect(composition.totalScore, greaterThan(700), reason: 'seed $seed');
+      expect(composition.totalUnits, lessThan(40), reason: 'seed $seed');
+      expect(
+        composition.counts.keys.any(
+          (type) =>
+              type == UnitType.heavyKnight ||
+              type == UnitType.miniGolem ||
+              type == UnitType.golem ||
+              type == UnitType.wizard,
+        ),
+        isTrue,
+        reason: 'seed $seed',
+      );
+    }
+  });
+
+  test('deadly pressure exists before peak unlocks', () {
     final composition = SpawnSystem.generateComposition(
       DifficultyCategory.deadly,
+      120,
+      120,
+      GameRng(8),
+    );
+    expect(composition.totalScore, greaterThan(200));
+    expect(composition.totalScore, lessThan(500));
+  });
+
+  test('weak packs stay a farm even after the army snowballs', () {
+    final composition = SpawnSystem.generateComposition(
+      DifficultyCategory.weak,
       400,
-      5000,
-      GameRng(11),
+      400,
+      GameRng(2),
     );
-    expect(composition.totalUnits, lessThan(40));
-    expect(composition.counts[UnitType.miniKnight] ?? 0, lessThan(composition.totalUnits));
-    expect(
-      composition.counts.keys.any(
-        (type) =>
-            type == UnitType.heavyKnight ||
-            type == UnitType.miniGolem ||
-            type == UnitType.golem ||
-            type == UnitType.wizard,
-      ),
-      isTrue,
-    );
+    expect(composition.totalScore, lessThan(220));
   });
 
   test('seeded generation is deterministic', () {

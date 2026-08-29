@@ -19,22 +19,18 @@ class SquadInspectLayer extends Component with HasGameReference<NecromancyGame> 
     if (living.isEmpty) {
       return;
     }
-    final ring = Paint()
-      ..color = const Color(0xE6FF2A22)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.6;
+    var x = 0.0;
+    var y = 0.0;
     for (final unit in living) {
-      canvas.drawCircle(
-        Offset(unit.position.x, unit.position.y),
-        unit.physicalRadius + 6,
-        ring,
-      );
+      final center = unit.absoluteCenter;
+      x += center.x;
+      y += center.y;
     }
-    final center = squad.center;
-    final label = '${living.length}';
+    x /= living.length;
+    y /= living.length;
     final painter = TextPainter(
       text: TextSpan(
-        text: 'Squad: $label',
+        text: 'Squad: ${living.length}',
         style: const TextStyle(
           color: Color(0xFFFFF5F3),
           fontSize: 16,
@@ -48,7 +44,7 @@ class SquadInspectLayer extends Component with HasGameReference<NecromancyGame> 
       textDirection: TextDirection.ltr,
     )..layout();
     final bg = Rect.fromCenter(
-      center: Offset(center.x, center.y - 28),
+      center: Offset(x, y - 28),
       width: painter.width + 16,
       height: painter.height + 10,
     );
@@ -63,9 +59,6 @@ class SquadInspectLayer extends Component with HasGameReference<NecromancyGame> 
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.4,
     );
-    painter.paint(
-      canvas,
-      Offset(bg.left + 8, bg.top + 5),
-    );
+    painter.paint(canvas, Offset(bg.left + 8, bg.top + 5));
   }
 }

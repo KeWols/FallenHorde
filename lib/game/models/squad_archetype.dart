@@ -6,4 +6,6 @@ enum SquadArchetype {
   golemEscort,
   titan,
   mixed,
+  rangedBall,
+  tankWall,
 }

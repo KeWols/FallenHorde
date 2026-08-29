@@ -59,7 +59,9 @@ class NecromancyGame extends FlameGame<GameWorld>
 
   ArmyJoystick? joystick;
   bool isGameOver = false;
+  bool isPaused = false;
   bool _gameOverHandled = false;
+  bool _scoreSubmitted = false;
   double fps = 60;
   VoidCallback? onHudTick;
   int get friendlyCount => world.livingFriendlies.length;
@@ -117,8 +119,11 @@ class NecromancyGame extends FlameGame<GameWorld>
 
   void restartRun() {
     overlays.remove('gameOver');
+    overlays.remove('pause');
     isGameOver = false;
+    isPaused = false;
     _gameOverHandled = false;
+    _scoreSubmitted = false;
     _hadLivingFriendlies = false;
     resumeEngine();
     _clearRun();
@@ -188,47 +193,57 @@ class NecromancyGame extends FlameGame<GameWorld>
 
   @override
   void update(double dt) {
+    if (isGameOver || isPaused) {
+      super.update(dt);
+      onHudTick?.call();
+      return;
+    }
     if (dt > 0) {
       fps = fps * 0.9 + (1 / dt) * 0.1;
     }
-    if (!isGameOver) {
-      if (!_enemiesSpawned &&
-          camera.isMounted &&
-          size.x > 0 &&
-          world.livingFriendlies.isNotEmpty) {
-        squads.recompute(world.units);
-        camera.viewfinder.position = squads.teamCenter.clone();
-        spawner.populateInitial();
-        _enemiesSpawned = true;
-      }
-      if (inspectTimer > 0) {
-        inspectTimer -= dt;
-        if (inspectTimer <= 0) {
-          inspectedSquadId = null;
-        }
-      }
-      _pollInput();
-      _rebuildSpatial();
+    if (!_enemiesSpawned &&
+        camera.isMounted &&
+        size.x > 0 &&
+        world.livingFriendlies.isNotEmpty) {
       squads.recompute(world.units);
-      _updateCamera(dt);
-      for (final unit in world.living) {
-        ai.update(unit, dt);
-      }
-      movement.step(dt);
-      _rebuildSpatial();
-      combat.tickProjectiles(dt);
-      necromancy.sweep();
-      spawner.tick(dt);
-      score.syncFromLiving();
-      _checkGameOver();
+      camera.viewfinder.position = squads.teamCenter.clone();
+      spawner.populateInitial();
+      _enemiesSpawned = true;
     }
+    if (inspectTimer > 0) {
+      inspectTimer -= dt;
+      if (inspectTimer <= 0) {
+        inspectedSquadId = null;
+      }
+    }
+    _pollInput();
+    _rebuildSpatial();
+    squads.recompute(world.units);
+    _updateCamera(dt);
+    for (final unit in world.living) {
+      ai.update(unit, dt);
+    }
+    movement.step(dt);
+    _rebuildSpatial();
+    combat.tickProjectiles(dt);
+    necromancy.sweep();
+    spawner.tick(dt);
+    score.syncFromLiving();
+    _checkGameOver();
     super.update(dt);
     onHudTick?.call();
   }
 
   @override
   void onTapDown(TapDownEvent event) {
-    if (isGameOver || !settings.inspectSquadOnClick) {
+    if (isGameOver || isPaused) {
+      return;
+    }
+    if (_isJoystickTap(event.canvasPosition)) {
+      return;
+    }
+    final allowInspect = useJoystick || settings.inspectSquadOnClick;
+    if (!allowInspect) {
       return;
     }
     final worldPos = camera.globalToLocal(event.canvasPosition);
@@ -237,7 +252,7 @@ class NecromancyGame extends FlameGame<GameWorld>
 
   @override
   void onSecondaryTapDown(SecondaryTapDownEvent event) {
-    if (isGameOver || useJoystick) {
+    if (isGameOver || isPaused || useJoystick) {
       return;
     }
     final worldPos = camera.globalToLocal(event.canvasPosition);
@@ -257,6 +272,55 @@ class NecromancyGame extends FlameGame<GameWorld>
       return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
+  }
+
+  void togglePauseMenu() {
+    if (isGameOver) {
+      return;
+    }
+    if (isPaused) {
+      resumeFromPause();
+    } else {
+      _enterPause();
+    }
+  }
+
+  void _enterPause() {
+    if (isPaused || isGameOver) {
+      return;
+    }
+    isPaused = true;
+    overlays.add('pause');
+    pauseEngine();
+    onHudTick?.call();
+  }
+
+  void resumeFromPause() {
+    if (!isPaused || isGameOver) {
+      return;
+    }
+    isPaused = false;
+    overlays.remove('pause');
+    resumeEngine();
+  }
+
+  Future<void> giveUpToMenu() async {
+    overlays.remove('pause');
+    isPaused = false;
+    try {
+      await submitScoreIfNeeded();
+    } finally {
+      onExitToMenu();
+    }
+  }
+
+  Future<void> submitScoreIfNeeded() async {
+    if (_scoreSubmitted) {
+      return;
+    }
+    _scoreSubmitted = true;
+    final recorded = score.maxScore;
+    await onGameOverScore(recorded);
   }
 
   void _pollInput() {
@@ -304,11 +368,12 @@ class NecromancyGame extends FlameGame<GameWorld>
 
   void _inspectSquadAt(Vector2 worldPos) {
     UnitComponent? nearest;
-    var best = GameConfig.squadInspectClickRadius *
-        GameConfig.squadInspectClickRadius;
+    var best = double.infinity;
+    final extra = useJoystick ? 32.0 : 16.0;
     for (final unit in world.livingEnemies) {
+      final reach = unit.physicalRadius + extra;
       final dist = unit.position.distanceToSquared(worldPos);
-      if (dist < best) {
+      if (dist <= reach * reach && dist < best) {
         best = dist;
         nearest = unit;
       }
@@ -319,6 +384,14 @@ class NecromancyGame extends FlameGame<GameWorld>
     }
     inspectedSquadId = squadId;
     inspectTimer = GameConfig.squadInspectDuration;
+  }
+
+  bool _isJoystickTap(Vector2 canvasPos) {
+    final stick = joystick;
+    if (stick == null || !stick.isMounted) {
+      return false;
+    }
+    return canvasPos.distanceTo(stick.absoluteCenter) <= 78;
   }
 
   void _rebuildSpatial() {
@@ -340,6 +413,6 @@ class NecromancyGame extends FlameGame<GameWorld>
     destinationMarker.hideMarker();
     pauseEngine();
     overlays.add('gameOver');
-    onGameOverScore(score.maxScore);
+    submitScoreIfNeeded();
   }
 }

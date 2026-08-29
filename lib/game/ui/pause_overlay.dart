@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../necromancy_game.dart';
 
-class GameOverOverlay extends StatelessWidget {
-  const GameOverOverlay({super.key, required this.game});
+class PauseOverlay extends StatelessWidget {
+  const PauseOverlay({super.key, required this.game});
 
   final NecromancyGame game;
 
@@ -26,7 +26,7 @@ class GameOverOverlay extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text(
-                    'GAME OVER',
+                    'PAUSED',
                     style: TextStyle(
                       color: Color(0xFFEDE8D8),
                       fontSize: 28,
@@ -34,43 +34,36 @@ class GameOverOverlay extends StatelessWidget {
                       letterSpacing: 1.4,
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'MAX SCORE',
-                    style: TextStyle(
-                      color: Color(0xFF9AA890),
-                      fontSize: 12,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
+                  const SizedBox(height: 8),
                   Text(
-                    '${game.score.maxScore}',
+                    'Max score  ${game.score.maxScore}',
                     style: const TextStyle(
-                      color: Color(0xFF7CFFB2),
-                      fontSize: 36,
-                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF9AA890),
+                      fontSize: 14,
                     ),
                   ),
                   const SizedBox(height: 22),
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed: () async {
-                        await game.submitScoreIfNeeded();
-                        game.restartRun();
-                      },
-                      child: const Text('RESTART'),
+                      onPressed: game.resumeFromPause,
+                      child: const Text('CONTINUE'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonal(
+                      onPressed: game.restartRun,
+                      child: const Text('RESET'),
                     ),
                   ),
                   const SizedBox(height: 8),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
-                      onPressed: () async {
-                        await game.submitScoreIfNeeded();
-                        game.onExitToMenu();
-                      },
-                      child: const Text('MAIN MENU'),
+                      onPressed: () => game.giveUpToMenu(),
+                      child: const Text('GIVE UP AND MAIN MENU'),
                     ),
                   ),
                 ],
