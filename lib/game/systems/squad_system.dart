@@ -16,6 +16,7 @@ class SquadSystem {
   bool hasMoveOrder = false;
   bool commitDisengage = false;
   int moveOrderSerial = 0;
+  int? focusHuntSquadId;
 
   final Map<int, EnemySquad> enemySquads = {};
   int nextEnemyId = 1;
@@ -26,10 +27,14 @@ class SquadSystem {
 
   int allocateEnemyId() => nextEnemyId++;
 
+  List<UnitComponent> cachedMainFriendlies = [];
+
   void reset() {
     teamCenter.setZero();
     teamRadius = 48;
     clearMoveOrder();
+    focusHuntSquadId = null;
+    cachedMainFriendlies = [];
     enemySquads.clear();
     nextEnemyId = 1;
     nextUnitId = 1;
@@ -44,7 +49,23 @@ class SquadSystem {
     moveOrderSerial = 0;
   }
 
+  void clearFocusHunt() {
+    focusHuntSquadId = null;
+  }
+
+  void beginFocusHunt(int squadId) {
+    focusHuntSquadId = squadId;
+    moveDestination = null;
+    moveDirection = null;
+    hasMoveOrder = false;
+    commitDisengage = false;
+    moveOrderSerial++;
+  }
+
   void setJoystickOrder(Vector2 direction, double intensity) {
+    if (intensity >= GameConfig.joystickCommitThreshold) {
+      clearFocusHunt();
+    }
     moveDirection = direction.normalized();
     moveDestination = null;
     hasMoveOrder = true;
@@ -52,6 +73,7 @@ class SquadSystem {
   }
 
   void setClickOrder(Vector2 destination) {
+    clearFocusHunt();
     moveDestination = destination.clone();
     moveDirection = null;
     hasMoveOrder = true;
@@ -66,6 +88,7 @@ class SquadSystem {
       }
     }
     if (main.isEmpty) {
+      cachedMainFriendlies = [];
       final living = [
         for (final unit in units)
           if (unit.isAlive && unit.isFriendly) unit,
@@ -78,18 +101,16 @@ class SquadSystem {
       return;
     }
     _averageInto(teamCenter, main);
-    var farthest = 0.0;
-    for (final unit in main) {
-      final d = unit.position.distanceTo(teamCenter);
-      if (d > farthest) {
-        farthest = d;
-      }
-    }
+    final dists = [
+      for (final unit in main) unit.position.distanceTo(teamCenter),
+    ]..sort();
+    final edge = dists[(dists.length * 0.86).floor().clamp(0, dists.length - 1)];
     teamRadius = max(
-      40,
-      farthest * GameConfig.teamRadiusPaddingFactor + GameConfig.cohesionMargin,
+      36,
+      edge * GameConfig.teamRadiusPaddingFactor + GameConfig.cohesionMargin,
     );
     _rebuildFriendlyFormation(main);
+    cachedMainFriendlies = main;
 
     for (final squad in enemySquads.values) {
       if (squad.eliminated) {
@@ -97,7 +118,7 @@ class SquadSystem {
       }
       final living = [for (final m in squad.members) if (m.isAlive) m];
       if (living.isNotEmpty) {
-        squad.rebuildFormation(GameConfig.formationSpacing);
+        squad.rebuildFormation(packedSpacing(living));
         squad.inCombat = living.any((m) => m.isFighting);
       } else {
         squad.inCombat = false;
@@ -108,6 +129,13 @@ class SquadSystem {
       if (teamCenter.distanceTo(moveDestination!) <=
           GameConfig.orderArriveDistance) {
         clearMoveOrder();
+      }
+    }
+    final huntId = focusHuntSquadId;
+    if (huntId != null) {
+      final hunted = enemySquads[huntId];
+      if (hunted == null || hunted.eliminated || !hunted.hasLivingMembers) {
+        focusHuntSquadId = null;
       }
     }
   }
@@ -121,10 +149,7 @@ class SquadSystem {
       if (!unit.isMainSquad) {
         return const [];
       }
-      return [
-        for (final other in unit.game.world.units)
-          if (other.isAlive && other.isFriendly && other.isMainSquad) other,
-      ];
+      return cachedMainFriendlies;
     }
     final id = unit.subEnemyId;
     if (id == null) {
@@ -180,13 +205,32 @@ class SquadSystem {
   }
 
   bool chaseExceeded(UnitComponent unit) {
+    if (unit.isFriendly &&
+        focusHuntSquadId != null &&
+        unit.isMainSquad) {
+      return false;
+    }
     final origin = unit.isFriendly
         ? teamCenter
         : (squadOf(unit)?.center ?? unit.chaseStartPosition);
     if (origin == null) {
       return false;
     }
-    return unit.position.distanceTo(origin) > unit.maxChaseDistance;
+    final leash = unit.maxChaseDistance *
+        (unit.assistMateId != null ? 1.7 : 1.0);
+    return unit.position.distanceTo(origin) > leash;
+  }
+
+  List<UnitComponent> huntedHostiles() {
+    final id = focusHuntSquadId;
+    if (id == null) {
+      return const [];
+    }
+    final squad = enemySquads[id];
+    if (squad == null || squad.eliminated) {
+      return const [];
+    }
+    return [for (final m in squad.members) if (m.isAlive) m];
   }
 
   void markChaseStart(UnitComponent unit) {
@@ -204,13 +248,31 @@ class SquadSystem {
     ];
   }
 
+  static double packedSpacing(List<UnitComponent> units) {
+    if (units.isEmpty) {
+      return GameConfig.formationSpacing;
+    }
+    var sum = 0.0;
+    for (final unit in units) {
+      sum += unit.physicalRadius;
+    }
+    final avg = sum / units.length;
+    final n = units.length;
+    // Large blobs stay tight, but not so tight that overlap-resolve explodes them.
+    final pack = 1.0 - 0.22 * ((n - 8) / 180).clamp(0.0, 1.0);
+    return (avg * 2.08 + 3.0) * pack;
+  }
+
   void _rebuildFriendlyFormation(List<UnitComponent> main) {
     friendlyFormation.clear();
     const golden = 2.399963;
-    for (var i = 0; i < main.length; i++) {
-      final r = i == 0 ? 0.0 : GameConfig.formationSpacing * sqrt(i + 0.35);
+    final spacing = packedSpacing(main);
+    final ordered = [...main]
+      ..sort((a, b) => b.physicalRadius.compareTo(a.physicalRadius));
+    for (var i = 0; i < ordered.length; i++) {
+      final r = i == 0 ? 0.0 : spacing * sqrt(i + 0.18);
       final a = i * golden;
-      friendlyFormation[main[i].id] = Vector2(cos(a) * r, sin(a) * r);
+      friendlyFormation[ordered[i].id] = Vector2(cos(a) * r, sin(a) * r);
     }
   }
 

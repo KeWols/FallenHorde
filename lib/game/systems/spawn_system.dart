@@ -16,6 +16,7 @@ import '../models/squad_archetype.dart';
 import '../models/unit_type.dart';
 import '../necromancy_game.dart';
 import '../services/game_rng.dart';
+import 'squad_system.dart';
 
 class _PendingReplacement {
   _PendingReplacement(this.category, this.delay);
@@ -137,26 +138,34 @@ class SpawnSystem {
       patrolA: clampedOrigin.clone(),
       patrolB: patrolB,
     );
-    var index = 0;
     composition.counts.forEach((type, count) {
       for (var i = 0; i < count; i++) {
-        final offset = _sunflower(index, GameConfig.formationSpacing);
-        final radius = UnitCatalog.stats(type).physicalRadius;
         final unit = UnitComponent(
           id: game.squads.allocateUnitId(),
           type: type,
           faction: Faction.enemy,
           subEnemyId: squad.id,
-          startPosition: WorldBounds.clamp(clampedOrigin + offset, radius),
+          startPosition: clampedOrigin.clone(),
           isMainSquad: false,
         );
+        unit.rollProjectileStyle(game.rng);
         unit.aiState = UnitAiState.patrol;
         squad.members.add(unit);
         game.world.add(unit);
-        index++;
       }
     });
-    squad.rebuildFormation(GameConfig.formationSpacing);
+    squad.members.sort(
+      (a, b) => b.physicalRadius.compareTo(a.physicalRadius),
+    );
+    final spacing = SquadSystem.packedSpacing(squad.members);
+    for (var i = 0; i < squad.members.length; i++) {
+      final unit = squad.members[i];
+      final offset = _sunflower(i, spacing);
+      unit.position.setFrom(
+        WorldBounds.clamp(clampedOrigin + offset, unit.physicalRadius),
+      );
+    }
+    squad.rebuildFormation(spacing);
     game.squads.enemySquads[squad.id] = squad;
     return squad;
   }
@@ -182,7 +191,14 @@ class SpawnSystem {
     if (category == DifficultyCategory.weak && currentScore <= 8) {
       archetype = SquadArchetype.swarm;
     }
-    final counts = _fillCounts(archetype, budget, allowed, rng, category);
+    final counts = _fillCounts(
+      archetype,
+      budget,
+      allowed,
+      rng,
+      category,
+      currentScore,
+    );
     if (counts.values.fold(0, (a, b) => a + b) == 0) {
       counts[UnitType.miniKnight] = 1;
     }
@@ -203,6 +219,10 @@ class SpawnSystem {
       if (squad.eliminated || !squad.hasLivingMembers || squad.inCombat) {
         continue;
       }
+      squad.currentPatrolTarget =
+          WorldBounds.clamp(squad.currentPatrolTarget, 280);
+      squad.patrolA.setFrom(WorldBounds.clamp(squad.patrolA, 280));
+      squad.patrolB.setFrom(WorldBounds.clamp(squad.patrolB, 280));
       final center = squad.center;
       if (center.distanceTo(squad.currentPatrolTarget) > 46) {
         continue;
@@ -258,13 +278,13 @@ class SpawnSystem {
       final dist = game.rng.range(220, 520);
       final point = WorldBounds.clamp(
         from + Vector2(cos(angle) * dist, sin(angle) * dist),
-        20,
+        280,
       );
       if (point.distanceTo(from) > 140) {
         return point;
       }
     }
-    return WorldBounds.clamp(from + Vector2(220, 0), 20);
+    return WorldBounds.clamp(from + Vector2(220, 0), 280);
   }
 
   Vector2 _sunflower(int index, double spacing) {
@@ -381,13 +401,13 @@ class SpawnSystem {
         add(SquadArchetype.mixed, 0.7, UnitType.mediumKnight);
         add(SquadArchetype.titan, 0.45, UnitType.golem);
       case DifficultyCategory.deadly:
-        add(SquadArchetype.titan, 1.1, UnitType.golem);
-        add(SquadArchetype.tankWall, 1.0, UnitType.miniGolem);
-        add(SquadArchetype.golemEscort, 0.95, UnitType.miniGolem);
-        add(SquadArchetype.rangedBall, 0.85, UnitType.wizard);
-        add(SquadArchetype.heavyLine, 0.8, UnitType.heavyKnight);
-        add(SquadArchetype.mixed, 0.6, UnitType.heavyKnight);
-        add(SquadArchetype.casterEscort, 0.55, UnitType.wizard);
+        add(SquadArchetype.rangedBall, 0.62, UnitType.wizard);
+        add(SquadArchetype.casterEscort, 0.9, UnitType.wizard);
+        add(SquadArchetype.titan, 0.85, UnitType.golem);
+        add(SquadArchetype.tankWall, 0.7, UnitType.miniGolem);
+        add(SquadArchetype.golemEscort, 0.7, UnitType.miniGolem);
+        add(SquadArchetype.heavyLine, 0.75, UnitType.heavyKnight);
+        add(SquadArchetype.mixed, 0.8, UnitType.heavyKnight);
     }
     if (items.isEmpty) {
       return SquadArchetype.swarm;
@@ -401,6 +421,7 @@ class SpawnSystem {
     Set<UnitType> allowed,
     GameRng rng,
     DifficultyCategory category,
+    int currentScore,
   ) {
     if (category == DifficultyCategory.weak && budget <= 1.5) {
       return {UnitType.miniKnight: 1};
@@ -422,20 +443,8 @@ class SpawnSystem {
     });
     avg = max(1, avg);
     var minCount = SpawnConfig.minUnitCounts[archetype]!;
-    var maxCount = SpawnConfig.maxUnitCounts[archetype]!;
-    final hardCap = switch (category) {
-      DifficultyCategory.weak => 12,
-      DifficultyCategory.normal => 24,
-      DifficultyCategory.strong => 28,
-      DifficultyCategory.deadly => 36,
-    };
-    final extra = switch (category) {
-      DifficultyCategory.weak => 0,
-      DifficultyCategory.normal => 2,
-      DifficultyCategory.strong => 6,
-      DifficultyCategory.deadly => 10,
-    };
-    maxCount = min(hardCap, maxCount + extra);
+    final hardCap = SpawnConfig.unitCap(category, currentScore);
+    var maxCount = hardCap;
     if (category == DifficultyCategory.weak) {
       minCount = 1;
       maxCount = min(12, maxCount);
@@ -477,9 +486,9 @@ class SpawnSystem {
     var total = _scoreOf(counts);
     final low = budget * 0.92;
     final high = budget * 1.18;
-    final expensive = _priciestAllowed(allowed);
+    final expensive = _upgradeTarget(counts, allowed);
     var guard = 0;
-    while (total < low && guard < 56) {
+    while (total < low && guard < 220) {
       if (assigned < maxCount) {
         counts[expensive] = (counts[expensive] ?? 0) + 1;
         assigned++;
@@ -516,7 +525,181 @@ class SpawnSystem {
       guard++;
     }
     counts.removeWhere((_, value) => value <= 0);
+    _diversifyGolemPacks(counts, allowed, rng, archetype);
+    _clampAssigned(counts, hardCap);
+    _capWizardShare(counts, allowed, rng, archetype);
+    _clampAssigned(counts, hardCap);
+    counts.removeWhere((_, value) => value <= 0);
     return counts;
+  }
+
+  static UnitType _upgradeTarget(
+    Map<UnitType, int> counts,
+    Set<UnitType> allowed,
+  ) {
+    final golems = counts[UnitType.golem] ?? 0;
+    final miniG = counts[UnitType.miniGolem] ?? 0;
+    if (golems >= 8 && allowed.contains(UnitType.heavyKnight)) {
+      return UnitType.heavyKnight;
+    }
+    if (miniG >= 10 && allowed.contains(UnitType.heavyKnight)) {
+      return UnitType.heavyKnight;
+    }
+    if (golems + miniG >= 12 && allowed.contains(UnitType.mediumKnight)) {
+      return UnitType.mediumKnight;
+    }
+    return _priciestAllowed(allowed);
+  }
+
+  static void _diversifyGolemPacks(
+    Map<UnitType, int> counts,
+    Set<UnitType> allowed,
+    GameRng rng,
+    SquadArchetype archetype,
+  ) {
+    var golems = counts[UnitType.golem] ?? 0;
+    var miniG = counts[UnitType.miniGolem] ?? 0;
+    if (golems + miniG == 0) {
+      return;
+    }
+    const maxGolem = 8;
+    const maxMiniGolem = 10;
+    while (golems > maxGolem) {
+      golems--;
+      counts[UnitType.golem] = golems;
+      _convertTankBudget(counts, allowed, rng, 150);
+    }
+    while (miniG > maxMiniGolem) {
+      miniG--;
+      counts[UnitType.miniGolem] = miniG;
+      _convertTankBudget(counts, allowed, rng, 60);
+    }
+    final total = counts.values.fold(0, (a, b) => a + b);
+    final wizards = counts[UnitType.wizard] ?? 0;
+    if (allowed.contains(UnitType.wizard) &&
+        total >= 8 &&
+        wizards < 2 &&
+        archetype != SquadArchetype.swarm) {
+      _addSupport(counts, allowed, rng, prefer: UnitType.wizard);
+    }
+    final melee = (counts[UnitType.miniKnight] ?? 0) +
+        (counts[UnitType.mediumKnight] ?? 0) +
+        (counts[UnitType.heavyKnight] ?? 0);
+    if (melee < max(4, (total * 0.22).round()) &&
+        allowed.contains(UnitType.miniKnight)) {
+      counts[UnitType.miniKnight] =
+          (counts[UnitType.miniKnight] ?? 0) +
+              (max(4, (total * 0.22).round()) - melee);
+    }
+  }
+
+  static void _convertTankBudget(
+    Map<UnitType, int> counts,
+    Set<UnitType> allowed,
+    GameRng rng,
+    int score,
+  ) {
+    var left = score;
+    void add(UnitType type, int cost) {
+      if (left < cost || !allowed.contains(type)) {
+        return;
+      }
+      counts[type] = (counts[type] ?? 0) + 1;
+      left -= cost;
+    }
+
+    while (left >= 25 && allowed.contains(UnitType.heavyKnight)) {
+      add(UnitType.heavyKnight, 25);
+    }
+    if (rng.nextDouble() < 0.55) {
+      add(UnitType.wizard, 18);
+    }
+    while (left >= 10 && allowed.contains(UnitType.mediumKnight)) {
+      add(UnitType.mediumKnight, 10);
+    }
+    if (left > 0) {
+      counts[UnitType.miniKnight] =
+          (counts[UnitType.miniKnight] ?? 0) + min(left, 6);
+    }
+  }
+
+  static void _clampAssigned(Map<UnitType, int> counts, int cap) {
+    var assigned = counts.values.fold(0, (a, b) => a + b);
+    var guard = 0;
+    while (assigned > cap && guard < 400) {
+      final cheap = _cheapestPresent(counts);
+      if (cheap == null) {
+        break;
+      }
+      counts[cheap] = counts[cheap]! - 1;
+      if (counts[cheap] == 0) {
+        counts.remove(cheap);
+      }
+      assigned--;
+      guard++;
+    }
+  }
+
+  static void _capWizardShare(
+    Map<UnitType, int> counts,
+    Set<UnitType> allowed,
+    GameRng rng,
+    SquadArchetype archetype,
+  ) {
+    var wizards = counts[UnitType.wizard] ?? 0;
+    if (wizards == 0) {
+      return;
+    }
+    final total = counts.values.fold(0, (a, b) => a + b);
+    if (total == 0) {
+      return;
+    }
+    final maxShare = archetype == SquadArchetype.rangedBall ? 0.48 : 0.34;
+    var cap = max(3, (total * maxShare).round());
+    if (archetype == SquadArchetype.rangedBall) {
+      cap = max(cap, 8);
+    }
+    while (wizards > cap) {
+      wizards--;
+      counts[UnitType.wizard] = wizards;
+      if (allowed.contains(UnitType.mediumKnight) && rng.nextDouble() < 0.45) {
+        counts[UnitType.mediumKnight] = (counts[UnitType.mediumKnight] ?? 0) + 1;
+      } else if (allowed.contains(UnitType.heavyKnight) &&
+          rng.nextDouble() < 0.35) {
+        counts[UnitType.heavyKnight] = (counts[UnitType.heavyKnight] ?? 0) + 1;
+      } else {
+        counts[UnitType.miniKnight] = (counts[UnitType.miniKnight] ?? 0) + 1;
+      }
+    }
+  }
+
+  static void _addSupport(
+    Map<UnitType, int> counts,
+    Set<UnitType> allowed,
+    GameRng rng, {
+    UnitType? prefer,
+  }) {
+    if (prefer != null && allowed.contains(prefer)) {
+      counts[prefer] = (counts[prefer] ?? 0) + 1;
+      return;
+    }
+    const ladder = [
+      UnitType.wizard,
+      UnitType.miniKnight,
+      UnitType.mediumKnight,
+      UnitType.heavyKnight,
+    ];
+    if (rng.nextDouble() < 0.4 && allowed.contains(UnitType.miniKnight)) {
+      counts[UnitType.miniKnight] = (counts[UnitType.miniKnight] ?? 0) + 3;
+      return;
+    }
+    for (final type in ladder) {
+      if (allowed.contains(type)) {
+        counts[type] = (counts[type] ?? 0) + (type == UnitType.miniKnight ? 3 : 1);
+        return;
+      }
+    }
+    counts[UnitType.miniKnight] = (counts[UnitType.miniKnight] ?? 0) + 2;
   }
 
   static int _scoreOf(Map<UnitType, int> counts) {

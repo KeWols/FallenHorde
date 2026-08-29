@@ -57,7 +57,7 @@ void main() {
         GameRng(seed),
       );
       expect(composition.totalScore, greaterThan(700), reason: 'seed $seed');
-      expect(composition.totalUnits, lessThan(40), reason: 'seed $seed');
+      expect(composition.totalUnits, lessThan(90), reason: 'seed $seed');
       expect(
         composition.counts.keys.any(
           (type) =>
@@ -91,6 +91,66 @@ void main() {
       GameRng(2),
     );
     expect(composition.totalScore, lessThan(220));
+  });
+
+  test('golem-era packs keep wizards and chaff instead of a tank blob', () {
+    var sawTanks = false;
+    for (final seed in [3, 8, 15, 22, 41]) {
+      final composition = SpawnSystem.generateComposition(
+        DifficultyCategory.deadly,
+        900,
+        5000,
+        GameRng(seed),
+      );
+      final tanks = (composition.counts[UnitType.golem] ?? 0) +
+          (composition.counts[UnitType.miniGolem] ?? 0);
+      if (tanks == 0) {
+        continue;
+      }
+      sawTanks = true;
+      expect(tanks, lessThan(20), reason: 'seed $seed');
+      final total = composition.totalUnits;
+      final wizards = composition.counts[UnitType.wizard] ?? 0;
+      if (total > 0) {
+        expect(wizards / total, lessThan(0.55), reason: 'seed $seed');
+      }
+      expect(
+        (composition.counts[UnitType.wizard] ?? 0) +
+            (composition.counts[UnitType.miniKnight] ?? 0),
+        greaterThan(0),
+        reason: 'seed $seed',
+      );
+    }
+    expect(sawTanks, isTrue);
+  });
+
+  test('late deadly packs stay mixed instead of 10 golems plus a wizard blob', () {
+    for (final seed in [5, 12, 19, 27, 40]) {
+      final composition = SpawnSystem.generateComposition(
+        DifficultyCategory.deadly,
+        2200,
+        5000,
+        GameRng(seed),
+      );
+      final total = composition.totalUnits;
+      final wizards = composition.counts[UnitType.wizard] ?? 0;
+      expect(total, greaterThan(55), reason: 'seed $seed');
+      expect(total, lessThan(181), reason: 'seed $seed');
+      if (total > 0) {
+        expect(wizards / total, lessThan(0.5), reason: 'seed $seed');
+      }
+    }
+  });
+
+  test('late deadly packs can exceed the old 55-unit cap', () {
+    final composition = SpawnSystem.generateComposition(
+      DifficultyCategory.deadly,
+      2200,
+      5000,
+      GameRng(19),
+    );
+    expect(composition.totalUnits, greaterThan(55));
+    expect(composition.totalUnits, lessThan(181));
   });
 
   test('seeded generation is deterministic', () {

@@ -57,7 +57,7 @@ class GameOverOverlay extends StatelessWidget {
                     child: FilledButton(
                       onPressed: () async {
                         await game.submitScoreIfNeeded();
-                        game.restartRun();
+                        await game.restartRun();
                       },
                       child: const Text('RESTART'),
                     ),

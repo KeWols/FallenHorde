@@ -45,6 +45,7 @@ class SpawnConfig {
   SpawnConfig._();
 
   /// How many squads of each threat band should exist, based on run progress.
+  /// Late game: fewer packs, each can be much larger.
   static SlotPlan slotPlan(int maxScore) {
     if (maxScore < 25) {
       return const SlotPlan(weak: 5, normal: 3, strong: 2, deadly: 1);
@@ -56,9 +57,29 @@ class SpawnConfig {
       return const SlotPlan(weak: 3, normal: 3, strong: 3, deadly: 2);
     }
     if (maxScore < 700) {
-      return const SlotPlan(weak: 2, normal: 3, strong: 3, deadly: 3);
+      return const SlotPlan(weak: 2, normal: 2, strong: 3, deadly: 2);
     }
-    return const SlotPlan(weak: 2, normal: 2, strong: 4, deadly: 3);
+    if (maxScore < 2500) {
+      return const SlotPlan(weak: 1, normal: 2, strong: 2, deadly: 2);
+    }
+    return const SlotPlan(weak: 1, normal: 1, strong: 2, deadly: 2);
+  }
+
+  static int unitCap(DifficultyCategory category, int currentScore) {
+    final current = currentScore < 1 ? 1 : currentScore;
+    final raw = switch (category) {
+      DifficultyCategory.weak => 8 + current / 90,
+      DifficultyCategory.normal => 16 + current / 48,
+      DifficultyCategory.strong => 26 + current / 22,
+      DifficultyCategory.deadly => 36 + current / 14,
+    };
+    final ceiling = switch (category) {
+      DifficultyCategory.weak => 28,
+      DifficultyCategory.normal => 90,
+      DifficultyCategory.strong => 150,
+      DifficultyCategory.deadly => 180,
+    };
+    return raw.round().clamp(4, ceiling);
   }
 
   static int slotsFor(DifficultyCategory category, int maxScore) {
@@ -78,7 +99,7 @@ class SpawnConfig {
 
   static const double pingPongChance = 0.50;
   static const double minimumSpawnDistanceFromPlayer = 520;
-  static const double spawnMapMargin = 220;
+  static const double spawnMapMargin = 340;
   static const double replacementDelayMin = 1.6;
   static const double replacementDelayMax = 3.4;
   static const int spawnLocationAttempts = 40;
@@ -139,10 +160,10 @@ class SpawnConfig {
       UnitType.heavyKnight: 0.20,
     },
     SquadArchetype.casterEscort: {
-      UnitType.wizard: 0.22,
-      UnitType.mediumKnight: 0.34,
-      UnitType.miniKnight: 0.32,
-      UnitType.heavyKnight: 0.12,
+      UnitType.wizard: 0.18,
+      UnitType.mediumKnight: 0.32,
+      UnitType.miniKnight: 0.30,
+      UnitType.heavyKnight: 0.20,
     },
     SquadArchetype.heavyLine: {
       UnitType.heavyKnight: 0.52,
@@ -158,11 +179,12 @@ class SpawnConfig {
       UnitType.miniKnight: 0.16,
     },
     SquadArchetype.titan: {
-      UnitType.golem: 0.22,
-      UnitType.heavyKnight: 0.28,
+      UnitType.golem: 0.12,
+      UnitType.heavyKnight: 0.24,
       UnitType.wizard: 0.16,
-      UnitType.mediumKnight: 0.22,
-      UnitType.miniGolem: 0.12,
+      UnitType.mediumKnight: 0.20,
+      UnitType.miniGolem: 0.10,
+      UnitType.miniKnight: 0.18,
     },
     SquadArchetype.mixed: {
       UnitType.miniKnight: 0.18,
@@ -173,16 +195,18 @@ class SpawnConfig {
       UnitType.golem: 0.10,
     },
     SquadArchetype.rangedBall: {
-      UnitType.wizard: 0.62,
-      UnitType.miniKnight: 0.18,
-      UnitType.mediumKnight: 0.12,
-      UnitType.heavyKnight: 0.08,
+      UnitType.wizard: 0.38,
+      UnitType.miniKnight: 0.28,
+      UnitType.mediumKnight: 0.18,
+      UnitType.heavyKnight: 0.16,
     },
     SquadArchetype.tankWall: {
-      UnitType.golem: 0.28,
-      UnitType.miniGolem: 0.36,
-      UnitType.heavyKnight: 0.28,
-      UnitType.wizard: 0.08,
+      UnitType.golem: 0.16,
+      UnitType.miniGolem: 0.22,
+      UnitType.heavyKnight: 0.18,
+      UnitType.wizard: 0.22,
+      UnitType.miniKnight: 0.14,
+      UnitType.mediumKnight: 0.08,
     },
   };
 }

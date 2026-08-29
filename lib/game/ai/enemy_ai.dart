@@ -1,3 +1,5 @@
+import 'package:flame/components.dart';
+
 import '../components/units/unit_component.dart';
 import '../config/game_config.dart';
 import '../models/ai_state.dart';
@@ -31,6 +33,7 @@ class EnemyAi {
         : UnitAiState.patrol;
     final slot = game.squads.formationSlotFor(unit);
     unit.desiredVelocity.setFrom(slot - unit.position);
+    _nudgeOffWall(unit);
   }
 
   static void _engage(
@@ -46,6 +49,7 @@ class EnemyAi {
       if (squad != null) {
         unit.desiredVelocity.setFrom(squad.center - unit.position);
       }
+      _nudgeOffWall(unit);
       return;
     }
     if (unit.isRanged) {
@@ -63,14 +67,42 @@ class EnemyAi {
       } else {
         unit.desiredVelocity.setZero();
       }
+      _nudgeOffWall(unit);
       return;
     }
     if (!game.targeting.hasMeleeSlot(unit, target)) {
       unit.aiState = UnitAiState.searchReachableTarget;
+      final along = target.position - unit.position;
+      if (along.length2 > 1) {
+        along.normalize();
+        final perp = Vector2(-along.y, along.x);
+        if (unit.id.isOdd) {
+          perp.scale(-1);
+        }
+        unit.desiredVelocity.setFrom(along * 0.72 + perp * 0.55);
+        _nudgeOffWall(unit);
+        return;
+      }
     } else {
       unit.aiState = UnitAiState.chaseTarget;
     }
     unit.desiredVelocity.setFrom(target.position - unit.position);
+    _nudgeOffWall(unit);
+  }
+
+  static void _nudgeOffWall(UnitComponent unit) {
+    const edge = 110.0;
+    final p = unit.position;
+    if (p.x < edge) {
+      unit.desiredVelocity.x += 1.2;
+    } else if (p.x > GameConfig.worldWidth - edge) {
+      unit.desiredVelocity.x -= 1.2;
+    }
+    if (p.y < edge) {
+      unit.desiredVelocity.y += 1.2;
+    } else if (p.y > GameConfig.worldHeight - edge) {
+      unit.desiredVelocity.y -= 1.2;
+    }
   }
 
   static bool _shouldAbortChase(

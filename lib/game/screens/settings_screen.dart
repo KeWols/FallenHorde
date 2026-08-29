@@ -115,6 +115,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     _save(_settings.copyWith(inspectSquadOnClick: value));
                   },
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Hunt enemy squad',
+                    style: TextStyle(color: Color(0xFFEDE8D8)),
+                  ),
+                  subtitle: const Text(
+                    'Windows: right-click an enemy. Phone: double-tap an enemy. Your army hunts that squad until it is gone.',
+                    style: TextStyle(color: Color(0xFF9AA890)),
+                  ),
+                  value: _settings.focusHuntOnCommand,
+                  onChanged: (value) {
+                    _save(_settings.copyWith(focusHuntOnCommand: value));
+                  },
+                ),
                 const SizedBox(height: 16),
                 const Text(
                   'Debug RNG seed (optional)',

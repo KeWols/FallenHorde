@@ -91,6 +91,12 @@ class NecromancySystem {
       game.spawner.scheduleReplacement(squad.category);
       return;
     }
+    for (final unit in game.world.livingFriendlies) {
+      if (unit.regroupTimer < GameConfig.regroupDuration) {
+        unit.regroupTimer = GameConfig.regroupDuration;
+      }
+      unit.clearTarget();
+    }
     for (var i = 0; i < graves.length; i++) {
       final grave = graves[i];
       final spawnType = grave.originalUnitType;
@@ -125,7 +131,9 @@ class NecromancySystem {
     unit.aiState = inside ? UnitAiState.idleWithTeam : UnitAiState.rejoinTeam;
     unit.hp = stats.maxHp;
     unit.spawnRevealTimer = GameConfig.spawnRevealDuration;
+    unit.regroupTimer = GameConfig.regroupDuration;
     game.world.add(unit);
+    unit.rollProjectileStyle(game.rng);
     game.score.onConverted(unit);
   }
 }

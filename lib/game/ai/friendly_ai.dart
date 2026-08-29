@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:flame/components.dart';
+
 import '../components/units/unit_component.dart';
 import '../config/game_config.dart';
 import '../models/ai_state.dart';
@@ -11,12 +13,18 @@ class FriendlyAi {
     _acknowledgeOrder(game, unit);
     _updateMembership(game, unit);
 
+    if (unit.regroupTimer > 0 && game.squads.focusHuntSquadId == null) {
+      _regroup(game, unit);
+      return;
+    }
+
     if (!unit.isMainSquad) {
       _isolatedOrRejoin(game, unit);
       return;
     }
 
-    if (_shouldFollowOrder(game, unit)) {
+    if (_shouldFollowOrder(game, unit) &&
+        !_shouldPeelForFight(game, unit)) {
       final opportunity = _hostileInMelee(game, unit);
       if (opportunity != null) {
         game.combat.tryAttack(unit, opportunity);
@@ -63,6 +71,31 @@ class FriendlyAi {
     }
   }
 
+  static bool _shouldPeelForFight(NecromancyGame game, UnitComponent unit) {
+    if (game.squads.focusHuntSquadId != null) {
+      return true;
+    }
+    if (unit.regroupTimer > 0) {
+      return false;
+    }
+    if (game.squads.commitDisengage && game.squads.hasMoveOrder) {
+      return false;
+    }
+    if (game.squads.hostilesInSight(unit, game.spatial).isNotEmpty) {
+      return true;
+    }
+    final group = game.squads.cachedMainFriendlies;
+    for (final mate in group) {
+      if (mate == unit || !mate.isFighting) {
+        continue;
+      }
+      if (unit.position.distanceTo(mate.position) <= GameConfig.assistJoinRadius) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static bool _shouldFollowOrder(NecromancyGame game, UnitComponent unit) {
     if (!game.squads.hasMoveOrder) {
       return false;
@@ -93,12 +126,31 @@ class FriendlyAi {
     unit.desiredVelocity.setFrom(slot - unit.position);
   }
 
-  static void _isolatedOrRejoin(NecromancyGame game, UnitComponent unit) {
-    final target = game.targeting.evaluate(unit);
-    if (target != null) {
-      _engage(game, unit, target);
+  static void _regroup(NecromancyGame game, UnitComponent unit) {
+    final melee = _hostileInMelee(game, unit);
+    if (melee != null) {
+      game.combat.tryAttack(unit, melee);
+    }
+    unit.clearTarget();
+    if (!unit.isMainSquad) {
+      unit.aiState = UnitAiState.rejoinTeam;
+      unit.desiredVelocity.setFrom(game.squads.teamCenter - unit.position);
+      if (game.squads.isInsideMainArmy(unit.position)) {
+        unit.isMainSquad = true;
+      }
       return;
     }
+    unit.aiState = UnitAiState.idleWithTeam;
+    _cohese(game, unit);
+  }
+
+  static void _isolatedOrRejoin(NecromancyGame game, UnitComponent unit) {
+    final melee = _hostileInMelee(game, unit);
+    if (melee != null) {
+      _engage(game, unit, melee);
+      return;
+    }
+    unit.clearTarget();
     unit.aiState = UnitAiState.rejoinTeam;
     unit.desiredVelocity.setFrom(game.squads.teamCenter - unit.position);
     if (game.squads.isInsideMainArmy(unit.position)) {
@@ -108,16 +160,13 @@ class FriendlyAi {
   }
 
   static void _updateMembership(NecromancyGame game, UnitComponent unit) {
-    if (!unit.isMainSquad || unit.isFighting) {
+    if (!unit.isMainSquad || unit.isFighting || unit.regroupTimer > 0) {
       return;
     }
     if (game.squads.hostilesInSight(unit, game.spatial).isNotEmpty) {
       return;
     }
-    final main = [
-      for (final other in game.world.livingFriendlies)
-        if (other.isMainSquad) other,
-    ];
+    final main = game.squads.cachedMainFriendlies;
     if (main.length <= 1) {
       return;
     }
@@ -171,6 +220,16 @@ class FriendlyAi {
       if (fallback != null && fallback.id != target.id) {
         unit.currentTargetId = fallback.id;
         unit.desiredVelocity.setFrom(fallback.position - unit.position);
+        return;
+      }
+      final along = target.position - unit.position;
+      if (along.length2 > 1) {
+        along.normalize();
+        final perp = Vector2(-along.y, along.x);
+        if (unit.id.isOdd) {
+          perp.scale(-1);
+        }
+        unit.desiredVelocity.setFrom(along * 0.72 + perp * 0.55);
         return;
       }
     }

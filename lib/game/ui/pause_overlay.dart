@@ -54,7 +54,7 @@ class PauseOverlay extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.tonal(
-                      onPressed: game.restartRun,
+                      onPressed: () => game.restartRun(),
                       child: const Text('RESET'),
                     ),
                   ),

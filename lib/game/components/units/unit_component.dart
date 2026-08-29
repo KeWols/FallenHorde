@@ -7,9 +7,11 @@ import '../../models/ai_state.dart';
 import '../../models/animation_state.dart';
 import '../../models/facing.dart';
 import '../../models/faction.dart';
+import '../../models/projectile_style.dart';
 import '../../models/unit_stats.dart';
 import '../../models/unit_type.dart';
 import '../../necromancy_game.dart';
+import '../../services/game_rng.dart';
 import 'placeholder_unit_view.dart';
 
 class UnitComponent extends PositionComponent
@@ -55,6 +57,8 @@ class UnitComponent extends PositionComponent
   double lastDamageTaken = 0;
   double targetEvalTimer = 0;
   double unreachableTimer = 0;
+  double regroupTimer = 0;
+  ProjectileStyle projectileStyle = ProjectileCatalog.white;
 
   final Vector2 desiredVelocity = Vector2.zero();
   final Vector2 velocity = Vector2.zero();
@@ -162,6 +166,9 @@ class UnitComponent extends PositionComponent
     if (chaseAbortCooldown > 0) {
       chaseAbortCooldown -= dt;
     }
+    if (regroupTimer > 0) {
+      regroupTimer -= dt;
+    }
   }
 
   @override
@@ -182,5 +189,11 @@ class UnitComponent extends PositionComponent
       animState = UnitAnimState.idle;
     }
     faceFromVelocity();
+  }
+
+  void rollProjectileStyle(GameRng rng) {
+    if (type == UnitType.wizard) {
+      projectileStyle = ProjectileCatalog.pick(rng);
+    }
   }
 }

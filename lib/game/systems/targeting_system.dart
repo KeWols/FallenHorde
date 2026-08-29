@@ -14,13 +14,26 @@ class TargetingSystem {
 
   UnitComponent? evaluate(UnitComponent unit) {
     if (unit.targetEvalTimer > 0) {
-      final existing = game.squads.findById(game.world.units, unit.currentTargetId);
-      if (existing != null && _stillValid(unit, existing)) {
+      final existing =
+          game.squads.findById(game.world.units, unit.currentTargetId);
+      final huntId = game.squads.focusHuntSquadId;
+      final huntOk = huntId == null || existing?.subEnemyId == huntId;
+      if (existing != null && huntOk && _stillValid(unit, existing)) {
         return existing;
       }
     }
     unit.targetEvalTimer =
         GameConfig.targetEvalInterval + (unit.id % 7) * 0.03;
+
+    if (unit.isFriendly && unit.isMainSquad && game.squads.focusHuntSquadId != null) {
+      final hunted = game.squads.huntedHostiles();
+      final bestHunt = _pickBest(unit, hunted, requireReachable: !unit.isRanged);
+      if (bestHunt != null) {
+        unit.currentTargetId = bestHunt.id;
+        unit.assistMateId = null;
+        return bestHunt;
+      }
+    }
 
     final personal = _personalHostiles(unit);
     final bestPersonal = _pickBest(unit, personal);
@@ -77,8 +90,8 @@ class TargetingSystem {
     if (inAttackRange(attacker, target)) {
       return true;
     }
-    const slots = 8;
-    final ring = attacker.physicalRadius + target.physicalRadius + 4;
+    const slots = 12;
+    final ring = attacker.physicalRadius + target.physicalRadius + 8;
     for (var i = 0; i < slots; i++) {
       final a = (2 * pi * i) / slots;
       final slot = target.position + Vector2(cos(a) * ring, sin(a) * ring);
@@ -100,11 +113,24 @@ class TargetingSystem {
     if (!target.isAlive || !target.faction.isHostileTo(unit.faction)) {
       return false;
     }
-    final dist = unit.position.distanceTo(target.position);
-    if (unit.isRanged) {
-      return inAttackRange(unit, target) || dist <= unit.effectiveSight * 1.25;
+    if (unit.isFriendly &&
+        game.squads.focusHuntSquadId != null &&
+        target.subEnemyId == game.squads.focusHuntSquadId) {
+      return true;
     }
-    return dist <= unit.effectiveSight * 1.2;
+    final dist = unit.position.distanceTo(target.position);
+    if (unit.assistMateId != null) {
+      final mate = game.squads.findById(game.world.units, unit.assistMateId);
+      if (mate != null && mate.isAlive) {
+        return dist <= unit.maxChaseDistance ||
+            unit.position.distanceTo(mate.position) <=
+                GameConfig.assistJoinRadius;
+      }
+    }
+    if (unit.isRanged) {
+      return inAttackRange(unit, target) || dist <= unit.effectiveSight * 1.35;
+    }
+    return dist <= unit.effectiveSight * 1.35;
   }
 
   List<UnitComponent> _personalHostiles(UnitComponent unit) {
@@ -173,6 +199,13 @@ class TargetingSystem {
         continue;
       }
       final dist = unit.position.distanceToSquared(mate.position);
+      final join = max(
+        GameConfig.assistJoinRadius,
+        game.squads.teamRadius * 2.5,
+      );
+      if (dist > join * join) {
+        continue;
+      }
       if (dist < bestDist) {
         bestDist = dist;
         best = mate;

@@ -6,6 +6,7 @@ class SettingsStorage {
   static const _zoomKey = 'fallen_horde_zoom';
   static const _debugKey = 'fallen_horde_debug';
   static const _inspectKey = 'fallen_horde_inspect_squad';
+  static const _huntKey = 'fallen_horde_focus_hunt';
   static const _seedKey = 'fallen_horde_seed';
 
   Future<SettingsData> load() async {
@@ -20,6 +21,7 @@ class SettingsStorage {
       cameraZoom: zoom,
       showDebug: prefs.getBool(_debugKey) ?? false,
       inspectSquadOnClick: prefs.getBool(_inspectKey) ?? false,
+      focusHuntOnCommand: prefs.getBool(_huntKey) ?? true,
       rngSeed: seed,
     );
   }
@@ -29,6 +31,7 @@ class SettingsStorage {
     await prefs.setInt(_zoomKey, settings.cameraZoom.index);
     await prefs.setBool(_debugKey, settings.showDebug);
     await prefs.setBool(_inspectKey, settings.inspectSquadOnClick);
+    await prefs.setBool(_huntKey, settings.focusHuntOnCommand);
     if (settings.rngSeed == null) {
       await prefs.remove(_seedKey);
     } else {

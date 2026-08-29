@@ -1,6 +1,7 @@
 import 'package:flame/components.dart';
 
 import '../components/effects/damage_popup.dart';
+import '../components/effects/projectile_impact_effect.dart';
 import '../components/projectiles/projectile_component.dart';
 import '../components/units/unit_component.dart';
 import '../config/game_config.dart';
@@ -16,6 +17,11 @@ class CombatSystem {
   void reset() {
     for (final projectile in game.world.projectiles.toList()) {
       projectile.removeFromParent();
+    }
+    for (final child in game.world.children.toList()) {
+      if (child is ProjectileImpactEffect) {
+        child.removeFromParent();
+      }
     }
     _pool.clear();
   }
@@ -74,6 +80,12 @@ class CombatSystem {
         amount: hit.lastDamageTaken.round().clamp(1, 999),
       ),
     );
+    game.world.add(
+      ProjectileImpactEffect(
+        worldPosition: projectile.position.clone(),
+        style: projectile.style,
+      ),
+    );
     despawnProjectile(projectile);
     if (!hit.isAlive) {
       game.necromancy.handleDeath(hit);
@@ -96,6 +108,7 @@ class CombatSystem {
       origin: wizard.position.clone(),
       dir: dir,
       faction: wizard.faction,
+      style: wizard.projectileStyle,
       projectileDamage: wizard.stats.damage,
       projectileSpeed: wizard.stats.projectileSpeed,
       projectileRadius: wizard.stats.projectilePhysicalRadius,

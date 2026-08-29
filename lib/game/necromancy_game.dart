@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flame/components.dart';
@@ -10,8 +11,6 @@ import 'package:flutter/widgets.dart';
 import 'ai/unit_ai.dart';
 import 'components/debug/debug_layer.dart';
 import 'components/debug/squad_inspect_layer.dart';
-import 'components/effects/damage_popup.dart';
-import 'components/effects/resurrection_effect.dart';
 import 'components/units/unit_component.dart';
 import 'components/world/destination_marker.dart';
 import 'components/world/world_backdrop.dart';
@@ -69,11 +68,14 @@ class NecromancyGame extends FlameGame<GameWorld>
 
   bool _enemiesSpawned = false;
   bool _hadLivingFriendlies = false;
+  bool _runReady = false;
   bool _joystickWasActive = false;
   bool _joystickWasCommit = false;
 
   int? inspectedSquadId;
   double inspectTimer = 0;
+  int? _lastTapMs;
+  Vector2? _lastTapCanvas;
 
   bool get useJoystick =>
       defaultTargetPlatform == TargetPlatform.android ||
@@ -117,7 +119,7 @@ class NecromancyGame extends FlameGame<GameWorld>
     rng.reseed(settings.rngSeed);
   }
 
-  void restartRun() {
+  Future<void> restartRun() async {
     overlays.remove('gameOver');
     overlays.remove('pause');
     isGameOver = false;
@@ -125,9 +127,14 @@ class NecromancyGame extends FlameGame<GameWorld>
     _gameOverHandled = false;
     _scoreSubmitted = false;
     _hadLivingFriendlies = false;
-    resumeEngine();
-    _clearRun();
-    _startRun();
+    _runReady = false;
+    // Removals only complete while the engine is ticking. Game Over / Pause
+    // already paused it, so waiting on `removed` here would hang forever.
+    if (paused) {
+      resumeEngine();
+    }
+    await _clearRun();
+    await _startRun();
   }
 
   Future<void> _startRun() async {
@@ -161,20 +168,35 @@ class NecromancyGame extends FlameGame<GameWorld>
     score.beginRun();
     _enemiesSpawned = false;
     _hadLivingFriendlies = world.livingFriendlies.isNotEmpty;
+    _runReady = true;
   }
 
-  void _clearRun() {
-    for (final unit in world.units.toList()) {
-      unit.removeFromParent();
-    }
-    for (final grave in world.graves.toList()) {
-      grave.removeFromParent();
-    }
+  Future<void> _clearRun() async {
+    _runReady = false;
+    final pending = <Future<void>>[];
     for (final child in world.children.toList()) {
-      if (child is ResurrectionEffect || child is DamagePopup) {
-        child.removeFromParent();
+      if (child is WorldBackdrop ||
+          child is DestinationMarker ||
+          child is DebugLayer ||
+          child is SquadInspectLayer) {
+        continue;
+      }
+      if (!child.isMounted) {
+        continue;
+      }
+      pending.add(child.removed);
+      child.removeFromParent();
+    }
+    if (pending.isNotEmpty) {
+      try {
+        await Future.wait(pending).timeout(const Duration(milliseconds: 1500));
+      } on TimeoutException {
+        // A paused engine used to hang here forever; keep reset unblocking.
       }
     }
+    world.units.clear();
+    world.graves.clear();
+    world.projectiles.clear();
     combat.reset();
     spatial.clear();
     squads.reset();
@@ -187,13 +209,15 @@ class NecromancyGame extends FlameGame<GameWorld>
     _hadLivingFriendlies = false;
     inspectedSquadId = null;
     inspectTimer = 0;
+    _lastTapMs = null;
+    _lastTapCanvas = null;
     _joystickWasActive = false;
     _joystickWasCommit = false;
   }
 
   @override
   void update(double dt) {
-    if (isGameOver || isPaused) {
+    if (isGameOver || isPaused || !_runReady) {
       super.update(dt);
       onHudTick?.call();
       return;
@@ -242,11 +266,25 @@ class NecromancyGame extends FlameGame<GameWorld>
     if (_isJoystickTap(event.canvasPosition)) {
       return;
     }
+    final canvasPos = event.canvasPosition;
+    final worldPos = camera.globalToLocal(canvasPos);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final isDoubleTap = _lastTapMs != null &&
+        _lastTapCanvas != null &&
+        now - _lastTapMs! <= (GameConfig.doubleTapWindow * 1000).round() &&
+        canvasPos.distanceTo(_lastTapCanvas!) <= 52;
+    _lastTapMs = now;
+    _lastTapCanvas = canvasPos.clone();
+    if (isDoubleTap &&
+        useJoystick &&
+        settings.focusHuntOnCommand &&
+        _tryFocusHunt(worldPos)) {
+      return;
+    }
     final allowInspect = useJoystick || settings.inspectSquadOnClick;
     if (!allowInspect) {
       return;
     }
-    final worldPos = camera.globalToLocal(event.canvasPosition);
     _inspectSquadAt(worldPos);
   }
 
@@ -256,6 +294,9 @@ class NecromancyGame extends FlameGame<GameWorld>
       return;
     }
     final worldPos = camera.globalToLocal(event.canvasPosition);
+    if (settings.focusHuntOnCommand && _tryFocusHunt(worldPos)) {
+      return;
+    }
     final clamped = WorldBounds.clamp(worldPos, 0);
     squads.setClickOrder(clamped);
     squads.moveOrderSerial++;
@@ -367,9 +408,36 @@ class NecromancyGame extends FlameGame<GameWorld>
   }
 
   void _inspectSquadAt(Vector2 worldPos) {
+    final nearest = _enemyAt(worldPos);
+    final squadId = nearest?.subEnemyId;
+    if (nearest == null || squadId == null) {
+      return;
+    }
+    inspectedSquadId = squadId;
+    inspectTimer = GameConfig.squadInspectDuration;
+  }
+
+  bool _tryFocusHunt(Vector2 worldPos) {
+    final nearest = _enemyAt(worldPos);
+    final squadId = nearest?.subEnemyId;
+    if (nearest == null || squadId == null) {
+      return false;
+    }
+    squads.beginFocusHunt(squadId);
+    inspectedSquadId = squadId;
+    inspectTimer = GameConfig.squadInspectDuration;
+    destinationMarker.hideMarker();
+    for (final unit in world.livingFriendlies) {
+      unit.targetEvalTimer = 0;
+      unit.chaseAbortCooldown = 0;
+    }
+    return true;
+  }
+
+  UnitComponent? _enemyAt(Vector2 worldPos) {
     UnitComponent? nearest;
     var best = double.infinity;
-    final extra = useJoystick ? 32.0 : 16.0;
+    final extra = useJoystick ? 36.0 : 18.0;
     for (final unit in world.livingEnemies) {
       final reach = unit.physicalRadius + extra;
       final dist = unit.position.distanceToSquared(worldPos);
@@ -378,12 +446,7 @@ class NecromancyGame extends FlameGame<GameWorld>
         nearest = unit;
       }
     }
-    final squadId = nearest?.subEnemyId;
-    if (nearest == null || squadId == null) {
-      return;
-    }
-    inspectedSquadId = squadId;
-    inspectTimer = GameConfig.squadInspectDuration;
+    return nearest;
   }
 
   bool _isJoystickTap(Vector2 canvasPos) {

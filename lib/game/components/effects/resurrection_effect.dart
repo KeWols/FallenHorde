@@ -49,7 +49,16 @@ class ResurrectionEffect extends PositionComponent
   }
 
   @override
+  void onRemove() {
+    _emerged = true;
+    super.onRemove();
+  }
+
+  @override
   void update(double dt) {
+    if (!isMounted) {
+      return;
+    }
     if (_wait > 0) {
       _wait -= dt;
       return;

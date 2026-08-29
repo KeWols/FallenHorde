@@ -45,15 +45,18 @@ class GameConfig {
   static const double disengageMax = 0.48;
   static const double committedAttackDuration = 0.18;
 
-  static const double chaseDistanceMultiplier = 4.5;
+  static const double chaseDistanceMultiplier = 5.4;
   static const double chaseAbortCooldown = 0.45;
+  static const double assistJoinRadius = 280;
+  static const double regroupDuration = 2.15;
+  static const double doubleTapWindow = 0.34;
 
-  static const double cohesionMargin = 36;
-  static const double teamRadiusPaddingFactor = 1.20;
-  static const double joinMargin = 48;
-  static const double detachedDistanceFactor = 2.35;
+  static const double cohesionMargin = 20;
+  static const double teamRadiusPaddingFactor = 1.06;
+  static const double joinMargin = 36;
+  static const double detachedDistanceFactor = 1.85;
   static const double formationSpacing = 22;
-  static const double cohesionWeight = 0.35;
+  static const double cohesionWeight = 0.52;
   static const double separationWeight = 1.15;
   static const int overlapResolveIterations = 3;
 
